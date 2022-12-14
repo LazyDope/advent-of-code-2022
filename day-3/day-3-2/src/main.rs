@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::HashSet, fs};
 
 fn main() {
     let input = fs::read_to_string("input").unwrap();
@@ -14,17 +14,17 @@ fn main() {
         if l_1.is_none() || l_2.is_none() || l_3.is_none() {
             break;
         }
-        let l_2: Vec<char> = l_2.unwrap().chars().collect();
-        let l_3: Vec<char> = l_3.unwrap().chars().collect();
+        let l_1: HashSet<char> = l_1.unwrap().chars().collect();
+        let l_2: HashSet<char> = l_2.unwrap().chars().collect();
+        let l_3: HashSet<char> = l_3.unwrap().chars().collect();
         let letter = l_1
-            .unwrap()
-            .chars()
-            .filter(|x| l_2.contains(&x) && l_3.contains(&x))
+            .intersection(&l_2)
+            .filter(|x| l_3.contains(x))
             .next()
             .unwrap();
         num += match letter {
-            'a'..='z' => u32::from(letter) - 96,
-            'A'..='Z' => u32::from(letter) - 38,
+            'a'..='z' => u32::from(*letter) - 96,
+            'A'..='Z' => u32::from(*letter) - 38,
             _ => 0,
         };
     }
