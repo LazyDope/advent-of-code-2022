@@ -1,69 +1,146 @@
-use std::{collections::HashMap, fs};
+use std::{cell::RefCell, collections::HashMap, fs, rc::Rc};
 
 fn main() {
     let input = fs::read_to_string("input").unwrap();
 
-    let mut files = Storage::new();
-    let mut pwd: &mut Node = files.files.get_mut("/").unwrap();
+    let mut storage = Storage::new();
+    let mut cwd: Rc<RefCell<Directory>> = storage.root.clone();
+    let mut cwd_name = "/";
 
     for (command, output) in input
         .split("$ ")
         .map(|cmdout| cmdout.split_once("\n").unwrap_or((cmdout, "")))
     {
-        match &command[..2] {
-            "cd" => {
-                let dir = &command[3..];
-                if dir == "/" {
-                    pwd = files.files.get_mut("/").unwrap();
+        match command.get(..2) {
+            Some("cd") => {
+                let name = command.get(3..).expect("No dir name found!");
+                if name == ".." {
+                    let tmp =
+                        cwd.borrow().parent.clone().expect(&format!(
+                        "Can't switch to parent dir without a parent! {} does not have a parent!",
+                        cwd_name));
+                    cwd = tmp;
+                    cwd_name = name;
                     continue;
-                } else if !pwd.unwrap_dir().contains_key(dir) {
-                    pwd.unwrap_dir()
-                        .insert(String::from(dir), Node::Dir(HashMap::new()));
+                } else if name == "/" {
+                    cwd = storage.root.clone();
+                    continue;
                 }
-                pwd = pwd.unwrap_dir().get_mut(dir).unwrap();
+                cwd = match cwd.clone().borrow().files.get(name) {
+                    Some(x) => match x {
+                        Node::Dir(dir) => dir.clone(),
+                        _ => panic!("Can't change cwd to a file!"),
+                    },
+                    _ => {
+                        let new_dir = cwd.borrow_mut().new_dir(name, cwd.clone());
+                        storage.directories.push(new_dir.clone());
+                        new_dir
+                    }
+                };
+                cwd_name = name;
             }
-            "ls" => {
+            Some("ls") => {
                 for (node_type, name) in output.lines().map(|line| line.split_once(" ").unwrap()) {
                     if node_type == "dir" {
-                        pwd.unwrap_dir()
-                            .insert(String::from(name), Node::Dir(HashMap::new()));
+                        let new_dir = cwd.borrow_mut().new_dir(name, cwd.clone());
+                        storage.directories.push(new_dir.clone());
                     } else {
                         let size = node_type.parse().unwrap();
-                        pwd.unwrap_dir()
-                            .insert(String::from(name), Node::File(size));
+                        cwd.borrow_mut().new_file(name, size);
                     }
                 }
             }
-            "" => continue,
+            None => continue,
             _ => {
-                panic!("Oopsie poopsie!")
+                panic!("Invalid command! {} could not be parsed!", command);
             }
         }
     }
+
+    let result: usize = storage
+        .directories
+        .iter()
+        .filter_map(|dir| {
+            let size = dir.borrow().file_size();
+            if size <= 100000 {
+                Some(size)
+            } else {
+                None
+            }
+        })
+        .sum();
+    println!("{}", result);
 }
 
 struct Storage {
+    pub root: Rc<RefCell<Directory>>,
+    pub directories: Vec<Rc<RefCell<Directory>>>,
+}
+
+struct Directory {
     pub files: HashMap<String, Node>,
+    pub parent: Option<Rc<RefCell<Directory>>>,
 }
 
 impl Storage {
     fn new() -> Storage {
-        let mut files = HashMap::new();
-        files.insert(String::from("/"), Node::Dir(HashMap::new()));
-        Storage { files }
+        let root = Rc::new(RefCell::new(Directory::new()));
+        Storage {
+            root: root.clone(),
+            directories: vec![root],
+        }
+    }
+}
+
+impl Directory {
+    fn new() -> Directory {
+        Directory {
+            files: HashMap::new(),
+            parent: None,
+        }
+    }
+
+    fn new_dir(&mut self, name: &str, parent: Rc<RefCell<Directory>>) -> Rc<RefCell<Directory>> {
+        let new_dir = Rc::new(RefCell::new(Directory::from(parent)));
+        self.files
+            .insert(name.to_string(), Node::Dir(new_dir.clone()));
+        new_dir
+    }
+
+    fn new_file(&mut self, name: &str, file_size: usize) {
+        self.files.insert(name.to_string(), Node::File(file_size));
+    }
+}
+
+impl From<Rc<RefCell<Directory>>> for Directory {
+    fn from(value: Rc<RefCell<Directory>>) -> Directory {
+        Directory {
+            files: HashMap::new(),
+            parent: Some(value),
+        }
     }
 }
 
 enum Node {
-    Dir(HashMap<String, Node>),
+    Dir(Rc<RefCell<Directory>>),
     File(usize),
 }
 
-impl Node {
-    fn unwrap_dir<'a>(&'a mut self) -> &'a mut HashMap<String, Node> {
+trait Sizable {
+    fn file_size(&self) -> usize;
+}
+
+impl Sizable for Node {
+    fn file_size(&self) -> usize {
         match self {
-            Node::Dir(x) => x,
-            _ => panic!("Expected a directory"),
+            Node::Dir(x) => x.borrow().file_size(),
+            Node::File(x) => *x,
         }
+    }
+}
+
+impl Sizable for Directory {
+    fn file_size(&self) -> usize {
+        self.files.values().map(|v| v.file_size()).sum()
     }
 }
